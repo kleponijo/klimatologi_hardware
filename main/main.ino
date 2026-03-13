@@ -8,6 +8,7 @@ const char* password = "12345678";
 const char* firebaseHost = "https://klimatologiot-default-rtdb.asia-southeast1.firebasedatabase.app/";
 
 const int pinHallEffect = 32;
+const int pinBuzzer = 18;
 
 volatile int pulseCount = 0;
 
@@ -24,6 +25,7 @@ void IRAM_ATTR hitungPulsa() {
 void setup() {
   Serial.begin(115200);
   pinMode(pinHallEffect, INPUT_PULLUP);
+  pinMode(pinBuzzer, OUTPUT);
 
   WiFi.begin(ssid, password);
   Serial.print("Connecting WiFi");
@@ -31,8 +33,23 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+
+    // Buzzer bunyi 2 kali
+    for(int i = 0; i < 2; i++) {
+      tone(pinBuzzer, 1000);
+      delay(300); // bunyi 0.3 detik
+
+      noTone(pinBuzzer);
+      delay(700); // jeda supaya total 1 detik per beep
+    }
+
+    delay(5000);
+    
   }
 
+  tone(pinBuzzer, 1000);
+  delay(500);
+  noTone(pinBuzzer);
   Serial.println("\nWiFi Connected!");
   Serial.println(WiFi.localIP());
 
