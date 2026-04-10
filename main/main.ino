@@ -53,7 +53,7 @@ void setup() {
   Serial.println("\nWiFi Connected!");
   Serial.println(WiFi.localIP());
 
-  configTime(7 * 3600, 0, "pool.ntp.org");
+  configTime(0, 0, "pool.ntp.org");
 
   attachInterrupt(digitalPinToInterrupt(pinHallEffect), hitungPulsa, FALLING);
 
