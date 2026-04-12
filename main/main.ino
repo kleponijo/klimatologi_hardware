@@ -91,8 +91,8 @@ void kirimRealtime(float kecepatan, int pulsa) {
     time_t now = time(nullptr);
 
     String jsonData = "{";
-    jsonData += "\"kecepatan\":" + String(kecepatan, 2) + ",";
-    jsonData += "\"pulsa\":" + String(pulsa) + ",";
+    jsonData += "\"speed\":" + String(kecepatan, 2) + ",";
+    jsonData += "\"pulse\":" + String(pulsa) + ",";
     jsonData += "\"timestamp\":" + String(now);
     jsonData += "}";
 
