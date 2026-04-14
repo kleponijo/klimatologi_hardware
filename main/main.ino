@@ -104,3 +104,5 @@ void kirimRealtime(float kecepatan, int pulsa) {
     http.end();
   }
 }
+
+// oke mai
