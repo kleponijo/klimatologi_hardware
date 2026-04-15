@@ -2,11 +2,15 @@
 #include "config.h"
 #include "firebase_helper.h"
 
+// Objek Firebase wajib ada di file utama
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
 volatile int pulseCount = 0;
-
 float kecepatan = 0;
-
 unsigned long lastSecond = 0;
+unsigned long lastHistory = 0; // Untuk history
 
 void IRAM_ATTR hitungPulsa() {
   pulseCount++;
@@ -14,10 +18,10 @@ void IRAM_ATTR hitungPulsa() {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(pinHallEffect, INPUT_PULLUP);
-  pinMode(pinBuzzer, OUTPUT);
+  pinMode(PIN_HALL, INPUT_PULLUP);
+  pinMode(PIN_BUZZER, OUTPUT);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting WiFi");
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -26,10 +30,10 @@ void setup() {
 
     // Buzzer bunyi 2 kali
     for(int i = 0; i < 2; i++) {
-      tone(pinBuzzer, 1000);
+      tone(PIN_BUZZER, 1000);
       delay(300); // bunyi 0.3 detik
 
-      noTone(pinBuzzer);
+      noTone(PIN_BUZZER);
       delay(700); // jeda supaya total 1 detik per beep
     }
 
@@ -37,31 +41,44 @@ void setup() {
     
   }
 
-  tone(pinBuzzer, 1000);
+  tone(PIN_BUZZER, 1000);
   delay(500);
-  noTone(pinBuzzer);
+  noTone(PIN_BUZZER);
   Serial.println("\nWiFi Connected!");
   Serial.println(WiFi.localIP());
 
-  attachInterrupt(digitalPinToInterrupt(pinHallEffect), hitungPulsa, FALLING);
+   // Panggil fungsi setup Firebase dari helper
+  setupFirebase(fbdo, auth, config);
+
+  attachInterrupt(digitalPinToInterrupt(PIN_HALL), hitungPulsa, FALLING);
 
   Serial.println("Sistem Anemometer Aktif");
 }
 
 void loop() {
 
-  if (millis() - lastSecond >= intervalSecond) {
+  // Logika realtime
+  if (millis() - lastSecond >= INTERVAL_REALTIME) {
 
     int Rdetik = pulseCount;
     pulseCount = 0;
 
-    kecepatan = 6.7824 * Rdetik * K;
+    kecepatan = 6.7824 * Rdetik * K_FAKTOR  ;
 
     Serial.print("Realtime km/h: ");
     Serial.println(kecepatan);
 
-    kirimRealtime(kecepatan, Rdetik);
+    // Panggil fungsi sendRealtime dari helper
+    sendRealtime(fbdo, kecepatan);
 
     lastSecond = millis();
+  }
+
+   // --- 2. LOGIKA HISTORY ---
+  if (millis() - lastHistory >= INTERVAL_HISTORY) {
+    // Panggil fungsi yang ada di firebase_helper.h
+    sendHistory(fbdo, kecepatan); 
+    
+    lastHistory = millis(); // Reset waktu history
   }
 }

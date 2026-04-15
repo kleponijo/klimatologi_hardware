@@ -1,8 +1,8 @@
 // --- Konfigurasi WiFi & Firebase ---
 const char* WIFI_SSID = "klepon";
 const char* WIFI_PASSWORD = "12345678";
-const char* DATABASE_URL = "https://klimatologiot-default-rtdb.asia-southeast1.firebasedatabase.app/";
-const char* API_KEY = "AIzaSy...ISI_DENGAN_API_KEY_WEB_KAMU"; 
+const char* DATABASE_URL = "https://klimatologiot-default-rtdb.asia-southeast1.firebasedatabase.app";
+const char* API_KEY = "AIzaSyAZrk_k4DQ_ijCa6gp67oRklFMKD2dLcbQ"; 
 
 // --- Konfigurasi Pin ---
 #define PIN_HALL 32
