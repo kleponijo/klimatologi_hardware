@@ -1,8 +1,8 @@
 #pragma once
 
 // --- WiFi ---
-const char* WIFI_SSID     = "wifiku";
-const char* WIFI_PASSWORD = "kamunanyak";
+const char* WIFI_SSID     = "DIDIET CH";
+const char* WIFI_PASSWORD = "didietch";
 
 // --- Firebase ---
 const char* DATABASE_URL = "https://klimatologiot-default-rtdb.asia-southeast1.firebasedatabase.app";
