@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 #include "cfg_config.h"
-#include "wifi_manager.h"
+#include "wifi_manager_updated.h"
 #include "fb_firebase_helper.h"
 
 // ── Firebase objects ──────────────────────────────────────────────
