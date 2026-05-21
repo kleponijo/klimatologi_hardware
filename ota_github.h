@@ -96,37 +96,15 @@ void checkAndUpdateOTA() {
   Serial.println("[OTA] Mulai download & flash...");
   Serial.println("[OTA] URL: " + binUrl);
 
-  String directUrl = binUrl;
-  {
-    WiFiClientSecure resolveClient;
-    resolveClient.setInsecure();
-    resolveClient.setTimeout(15000);
-
-    HTTPClient httpResolve;
-    httpResolve.begin(resolveClient, binUrl);
-    httpResolve.addHeader("User-Agent", "ESP32-Anemometer");
-    httpResolve.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS); // jangan ikuti dulu
-
-    int resolveCode = httpResolve.GET();
-    if (resolveCode == 301 || resolveCode == 302) {
-      String location = httpResolve.header("Location");
-      if (location.length() > 0) {
-        directUrl = location;
-        Serial.println("[OTA] CDN URL: " + directUrl);
-      }
-    }
-    httpResolve.end();
-  }
-
-  // ── Jalankan OTA dari URL CDN langsung ────────────────────────
   WiFiClientSecure updateClient;
   updateClient.setInsecure();
-  updateClient.setTimeout(30000); // 30 detik, cukup untuk download 1.4MB
+  updateClient.setTimeout(60000); // 60 detik untuk download
 
   httpUpdate.rebootOnUpdate(true);
-  httpUpdate.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS); // sudah resolved
+  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS); // ikuti semua redirect otomatis
 
-  t_httpUpdate_return ret = httpUpdate.update(updateClient, directUrl);
+  Serial.println("[OTA] Mulai flash dari: " + binUrl);
+  t_httpUpdate_return ret = httpUpdate.update(updateClient, binUrl);
 
   switch (ret) {
     case HTTP_UPDATE_FAILED:

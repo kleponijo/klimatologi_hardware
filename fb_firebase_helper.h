@@ -19,7 +19,20 @@ const int MAX_FAIL_BEFORE_REBOOT = 600;
 // ── State internal ────────────────────────────────────────────────
 static int           _consecutiveFail    = 0;
 static unsigned long _lastReinitAttempt  = 0;
-const  unsigned long REINIT_COOLDOWN     = 30000; // coba reinit tiap 30 detik
+const  unsigned long REINIT_COOLDOWN     = 30000UL; // coba reinit tiap 30 detik
+
+// ── Struct settings (nilai dari Firebase atau default) ────────
+struct SensorSettings {
+  float         kFaktor          = DEFAULT_K_FAKTOR;
+  unsigned long intervalRealtime = DEFAULT_INTERVAL_REALTIME;
+  unsigned long intervalHistory  = DEFAULT_INTERVAL_HISTORY;
+};
+
+// ── Device path prefix ────────────────────────────────────────
+// Semua path di bawah /anemometer/{DEVICE_ID}/
+static String _basePath() {
+  return String("/anemometer/") + DEVICE_ID;
+}
 
 // ── Alarm error (tetap seperti semula) ───────────────────────────
 void bunyiAlarmError() {
@@ -79,7 +92,7 @@ void setupFirebase(FirebaseData &fbdo, FirebaseAuth &auth, FirebaseConfig &confi
   }
 
   if (Firebase.ready()) {
-    Serial.println("\n[Firebase] READY!");
+    Serial.printf("\n[Firebase] READY! Device ID: %s\n", DEVICE_ID);
     _consecutiveFail = 0;
   } else {
     Serial.println("\n[Firebase] GAGAL READY");
@@ -110,15 +123,106 @@ static void _tryReinitFirebase(FirebaseConfig &config) {
   }
 }
 
-// ── Kirim Realtime ────────────────────────────────────────────────
-void sendRealtime(FirebaseData &fbdo, float speedMS, FirebaseConfig &config) {
-  static int ok = 0, fail = 0;
+// ══════════════════════════════════════════════════════════════
+//  fetchSettings — baca k_faktor & interval dari Firebase
+//
+//  Path Firebase (set dari Flutter app):
+//    /anemometer/settings/k_faktor             (float/double)
+//    /anemometer/settings/interval_realtime_ms (int, min 1000)
+//    /anemometer/settings/interval_history_ms  (int, min 60000)
+//
+//  Jika node belum ada atau gagal baca → pakai nilai default
+//  dari cfg_config.h (tidak crash).
+// ══════════════════════════════════════════════════════════════
+SensorSettings fetchSettings(FirebaseData &fbdo) {
+  SensorSettings s; // mulai dari default
+
+  // --- k_faktor ---
+  if (Firebase.RTDB.getFloat(&fbdo, "/anemometer/settings/k_faktor")) {
+    float val = fbdo.floatData();
+    if (val > 0.0f) {
+      s.kFaktor = val;
+      Serial.printf("[Settings] k_faktor = %.4f\n", s.kFaktor);
+    }
+  } else {
+    Serial.printf("[Settings] k_faktor gagal dibaca (%s), pakai default %.1f\n",
+                  fbdo.errorReason().c_str(), s.kFaktor);
+  }
+
+  // --- interval_realtime_ms ---
+  if (Firebase.RTDB.getInt(&fbdo, "/anemometer/settings/interval_realtime_ms")) {
+    long val = fbdo.intData();
+    if (val >= 1000) {
+      s.intervalRealtime = (unsigned long)val;
+      Serial.printf("[Settings] interval_realtime = %lu ms\n", s.intervalRealtime);
+    }
+  } else {
+    Serial.printf("[Settings] interval_realtime gagal dibaca, pakai default %lu ms\n",
+                  s.intervalRealtime);
+  }
+
+  // --- interval_history_ms ---
+  if (Firebase.RTDB.getInt(&fbdo, "/anemometer/settings/interval_history_ms")) {
+    long val = fbdo.intData();
+    if (val >= 60000) {
+      s.intervalHistory = (unsigned long)val;
+      Serial.printf("[Settings] interval_history  = %lu ms\n", s.intervalHistory);
+    }
+  } else {
+    Serial.printf("[Settings] interval_history gagal dibaca, pakai default %lu ms\n",
+                  s.intervalHistory);
+  }
+
+  return s;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  sendLog — push satu baris log ke Firebase
+//
+//  Path: /anemometer/{DEVICE_ID}/logs/{pushKey}
+//    {msg: "...", timestamp: unix}
+//
+//  Dipakai untuk boot, OTA result, error penting.
+//  Gagal kirim → hanya Serial, tidak trigger alarm/reboot.
+// ══════════════════════════════════════════════════════════════
+void sendLog(FirebaseData &fbdo, const String &msg) {
+  String path = _basePath() + "/logs";
 
   FirebaseJson json;
-  json.set("speed",     speedMS);
+  json.set("msg",       msg);
   json.set("timestamp", (int)time(NULL));
 
-  if (Firebase.RTDB.updateNode(&fbdo, "/anemometer/realtime", &json)) {
+  if (Firebase.RTDB.pushJSON(&fbdo, path, &json)) {
+    Serial.printf("[Log] OK: %s\n", msg.c_str());
+  } else {
+    Serial.printf("[Log] GAGAL kirim: %s\n", msg.c_str());
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  sendRealtime — update node realtime per interval
+//
+//  Path: /anemometer/{DEVICE_ID}/realtime
+//    {speed_ms, speed_kmh, sample_count, k_faktor, timestamp}
+// ══════════════════════════════════════════════════════════════
+void sendRealtime(FirebaseData &fbdo,
+                  float speedMS,
+                  int   sampleCount,
+                  const SensorSettings &settings,
+                  FirebaseConfig &config) {
+
+  static int ok = 0, fail = 0;
+
+  String path = _basePath() + "/realtime";
+
+  FirebaseJson json;
+  json.set("speed_ms",     speedMS);
+  json.set("speed_kmh",    speedMS * 3.6f);
+  json.set("sample_count", sampleCount);
+  json.set("k_faktor",     settings.kFaktor);
+  json.set("timestamp",    (int)time(NULL));
+
+  if (Firebase.RTDB.updateNode(&fbdo, path, &json)) {
     ok++;
     _consecutiveFail = 0;
     Serial.printf("[Firebase] Realtime OK (%d ok / %d fail)\n", ok, fail);
@@ -131,15 +235,13 @@ void sendRealtime(FirebaseData &fbdo, float speedMS, FirebaseConfig &config) {
                   ok, fail, reason.c_str());
     bunyiAlarmError();
 
-    // Deteksi token expired → coba refresh
-    if (reason.indexOf("token") >= 0   ||
-        reason.indexOf("expired") >= 0 ||
-        reason.indexOf("revoked") >= 0 ||
+    if (reason.indexOf("token")    >= 0 ||
+        reason.indexOf("expired")  >= 0 ||
+        reason.indexOf("revoked")  >= 0 ||
         reason.indexOf("not ready") >= 0) {
       _tryReinitFirebase(config);
     }
 
-    // Auto-reboot jika gagal terlalu lama
     if (_consecutiveFail >= MAX_FAIL_BEFORE_REBOOT) {
       Serial.printf("[Firebase] Gagal %d kali berturut-turut → AUTO REBOOT!\n",
                     _consecutiveFail);
@@ -149,21 +251,41 @@ void sendRealtime(FirebaseData &fbdo, float speedMS, FirebaseConfig &config) {
   }
 }
 
-// ── Kirim History ─────────────────────────────────────────────────
-void sendHistory(FirebaseData &fbdo, float avgSpeedMS, FirebaseConfig &config) {
-  FirebaseJson json;
-  json.set("speed",     avgSpeedMS);
-  json.set("timestamp", (int)time(NULL));
+// ══════════════════════════════════════════════════════════════
+//  sendHistory — push rata-rata per interval history
+//
+//  Path: /anemometer/{DEVICE_ID}/history/{pushKey}
+//    {avg_ms, avg_kmh, max_ms, sample_count, k_faktor,
+//     interval_ms, timestamp}
+// ══════════════════════════════════════════════════════════════
+void sendHistory(FirebaseData &fbdo,
+                 float avgSpeedMS,
+                 float maxSpeedMS,
+                 int   sampleCount,
+                 const SensorSettings &settings,
+                 FirebaseConfig &config) {
 
-  if (Firebase.RTDB.pushJSON(&fbdo, "/anemometer/history", &json)) {
-    Serial.println("[Firebase] History OK");
+  String path = _basePath() + "/history";
+
+  FirebaseJson json;
+  json.set("avg_ms",       avgSpeedMS);
+  json.set("avg_kmh",      avgSpeedMS * 3.6f);
+  json.set("max_ms",       maxSpeedMS);
+  json.set("sample_count", sampleCount);
+  json.set("k_faktor",     settings.kFaktor);
+  json.set("interval_ms",  (int)settings.intervalHistory);
+  json.set("timestamp",    (int)time(NULL));
+
+  if (Firebase.RTDB.pushJSON(&fbdo, path, &json)) {
+    Serial.printf("[Firebase] History OK — avg=%.4f max=%.4f dari %d sample\n",
+                  avgSpeedMS, maxSpeedMS, sampleCount);
   } else {
     String reason = fbdo.errorReason();
     Serial.printf("[Firebase] History GAGAL — %s\n", reason.c_str());
     bunyiAlarmError();
 
-    if (reason.indexOf("token") >= 0   ||
-        reason.indexOf("expired") >= 0 ||
+    if (reason.indexOf("token")     >= 0 ||
+        reason.indexOf("expired")   >= 0 ||
         reason.indexOf("not ready") >= 0) {
       _tryReinitFirebase(config);
     }

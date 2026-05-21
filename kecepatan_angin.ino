@@ -11,16 +11,24 @@ FirebaseData   fbdo;
 FirebaseAuth   fbAuth;
 FirebaseConfig fbConfig;
 
-volatile int  pulseCount  = 0;
-unsigned long lastSecond  = 0;
-unsigned long lastHistory = 0;
+// ── Settings dari Firebase (k_faktor, interval) ───────────────
+SensorSettings gSettings;
+unsigned long  lastSettingsSync   = 0;
+const unsigned long SETTINGS_SYNC = 300000UL; // sync ulang tiap 5 menit
 
-float totalSpeed   = 0;
-int   jumlahSample = 0;
+volatile int  pulseCount  = 0;
 
 void IRAM_ATTR hitungPulsa() {
   pulseCount++;
 }
+
+unsigned long lastRealtime = 0;
+unsigned long lastHistory = 0;
+
+float totalSpeed   = 0;
+float maxSpeed     = 0.0f;
+int   jumlahSample = 0;
+
 
 void setup() {
   Serial.begin(115200);
@@ -37,16 +45,25 @@ void setup() {
 
   if (wifiIsConnected()) {
     setupFirebase(fbdo, fbAuth, fbConfig);
+
+    // Baca settings awal dari Firebase
+    gSettings = fetchSettings(fbdo);
+
+    // Log boot ke Firebase
+    String bootMsg = "Boot OK | FW=" + String(FIRMWARE_VERSION)
+                   + " | k=" + String(gSettings.kFaktor, 2)
+                   + " | RT=" + String(gSettings.intervalRealtime / 1000) + "s"
+                   + " | H=" + String(gSettings.intervalHistory / 60000) + "m";
+    sendLog(fbdo, bootMsg);
+
     checkAndUpdateOTA(); 
   } else {
     Serial.println("[Main] Mode AP aktif — Firebase dilewati.");
     Serial.printf( "[Main] Sambungkan HP ke hotspot \"%s\"\n", AP_SSID);
-    Serial.println("[Main] lalu buka browser/app untuk isi WiFi baru.");
   }
 
   attachInterrupt(digitalPinToInterrupt(PIN_HALL), hitungPulsa, FALLING);
   Serial.println("[Main] Setup selesai. Sistem aktif.\n");
-  Serial.println("[Main] Firmware v1.0.1 — OTA test berhasil!");
 }
 
 void loop() {
@@ -58,35 +75,57 @@ void loop() {
     checkAndUpdateOTA();
   }
 
+  // ── Sync settings dari Firebase tiap 5 menit ───────────────
+  // (k_faktor, interval realtime, interval history)
+  if (wifiIsConnected() && millis() - lastSettingsSync >= SETTINGS_SYNC) {
+    lastSettingsSync = millis();
+    gSettings = fetchSettings(fbdo);
+  }
+
   if (!wifiIsConnected()) return;
 
   // ── REALTIME ─────────────────────────────────────────────────
-  if (millis() - lastSecond >= INTERVAL_REALTIME) {
+  // ── REALTIME — kirim speed rata-rata per interval ───────────
+  if (millis() - lastRealtime >= gSettings.intervalRealtime) {
+    // Ambil pulsa secara atomic
+    noInterrupts();
     int pulsa  = pulseCount;
     pulseCount = 0;
-    lastSecond = millis();
+    interrupts();
 
-    float intervalDetik = INTERVAL_REALTIME / 1000.0;
-    float speedMS = 2.0 * PI * RADIUS_M * (pulsa / intervalDetik) * K_FAKTOR;
+    lastRealtime = millis();
 
-    Serial.printf("[Main] Pulsa: %d | Speed: %.4f m/s\n", pulsa, speedMS);
-    sendRealtime(fbdo, speedMS, fbConfig); // ← tambah fbConfig
+    float intervalDetik = gSettings.intervalRealtime / 1000.0f;
+    float rps     = pulsa / intervalDetik;                    // rotasi per detik
+    float speedMS = 2.0f * PI * RADIUS_M * rps * gSettings.kFaktor;
 
+    Serial.printf("[Main] Pulsa: %d | RPS: %.3f | Speed: %.4f m/s (k=%.1f)\n",
+                  pulsa, rps, speedMS, gSettings.kFaktor);
+
+    // Kirim ke Firebase
+    sendRealtime(fbdo, speedMS, pulsa, gSettings, fbConfig);
+
+    // Akumulator untuk history
     totalSpeed += speedMS;
+    if (speedMS > maxSpeed) maxSpeed = speedMS;
     jumlahSample++;
   }
 
-  // ── HISTORY ───────────────────────────────────────────────────
-  if (millis() - lastHistory >= INTERVAL_HISTORY) {
+  // ── HISTORY — push rata-rata per interval ───────────────────
+  if (millis() - lastHistory >= gSettings.intervalHistory) {
     lastHistory = millis();
 
     if (jumlahSample > 0) {
       float avgSpeed = totalSpeed / jumlahSample;
-      Serial.printf("[Main] History — Avg: %.4f m/s dari %d sample\n",
-                    avgSpeed, jumlahSample);
-      sendHistory(fbdo, avgSpeed, fbConfig); // ← tambah fbConfig
-      totalSpeed   = 0;
+
+      sendHistory(fbdo, avgSpeed, maxSpeed, jumlahSample, gSettings, fbConfig);
+
+      // Reset akumulator
+      totalSpeed   = 0.0f;
+      maxSpeed     = 0.0f;
       jumlahSample = 0;
+    } else {
+      Serial.println("[Main] History skip — belum ada sample.");
     }
   }
 }
